@@ -196,8 +196,8 @@
           setTimeout(() => {
             btn.disabled = false;
             btn.innerHTML = "Add to cart";
-            // Check for new upsell opportunities after adding item
-            checkAndShowUpsell();
+            // Trigger cart rerender event after adding item
+            document.dispatchEvent(new CustomEvent("cart:rerender"));
           }, 1500);
         })
         .catch((err) => {
@@ -361,6 +361,46 @@
     return true;
   }
 
+  // Function to clear cache
+  function clearUpsellCache() {
+    const keys = Object.keys(sessionStorage);
+    keys.forEach((key) => {
+      if (key.startsWith("upsell_")) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  }
+
+  // Function to handle cart rerender
+  function handleCartRerender() {
+    clearUpsellCache();
+    setTimeout(() => {
+      checkAndShowUpsell();
+    }, 100);
+  }
+
+  // Listen for custom cart:rerender event
+  document.addEventListener("cart:rerender", handleCartRerender);
+
+  // Listen for Shopify cart events
+  document.addEventListener("cart:updated", handleCartRerender);
+  document.addEventListener("cart:refresh", handleCartRerender);
+
+  // Listen for cart clear events
+  document.addEventListener("submit", function (event) {
+    const form = event.target;
+    const action = form.action || "";
+    const method = form.method || "GET";
+
+    if (method === "POST" && action.includes("/cart/clear")) {
+      // Clear cache and check upsell after cart clear
+      setTimeout(() => {
+        clearUpsellCache();
+        checkAndShowUpsell();
+      }, 100);
+    }
+  });
+
   // Initialize on DOM load
   helpers.onDomLoaded(() => {
     console.log("[cart-upsell] DOM loaded, initializing...");
@@ -394,91 +434,6 @@
     }, 1000);
   });
 
-  // Function to clear cache
-  function clearUpsellCache() {
-    const keys = Object.keys(sessionStorage);
-    keys.forEach((key) => {
-      if (key.startsWith("upsell_")) {
-        sessionStorage.removeItem(key);
-      }
-    });
-  }
-
-  // Intercept cart requests to trigger upsell check
-  const originalFetch = window.fetch;
-  window.fetch = function (...args) {
-    const [url, options] = args;
-
-    // Check if this is a cart add request
-    if (typeof url === "string" && url.includes("/cart/add.js")) {
-      return originalFetch.apply(this, args).then((response) => {
-        // After successful cart add, clear cache and check for upsell opportunities
-        if (response.ok) {
-          clearUpsellCache();
-          setTimeout(() => {
-            checkAndShowUpsell();
-          }, 100);
-        }
-        return response;
-      });
-    }
-
-    // Check if this is a cart update/remove request
-    if (
-      typeof url === "string" &&
-      (url.includes("/cart/change.js") ||
-        url.includes("/cart/clear.js") ||
-        url.includes("/cart/update.js") ||
-        url.includes("/cart/change") ||
-        url.includes("/cart/update") ||
-        url.includes("/cart/clear"))
-    ) {
-      return originalFetch.apply(this, args).then((response) => {
-        // After successful cart update, clear cache and check for upsell opportunities
-        if (response.ok) {
-          clearUpsellCache();
-          setTimeout(() => {
-            checkAndShowUpsell();
-          }, 100);
-        }
-        return response;
-      });
-    }
-
-    return originalFetch.apply(this, args);
-  };
-
-  // Also intercept XMLHttpRequest for cart changes
-  const originalXHROpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url, ...args) {
-    if (typeof url === "string" && url.includes("/cart/")) {
-      this.addEventListener("load", function () {
-        if (this.status >= 200 && this.status < 300) {
-          clearUpsellCache();
-          setTimeout(() => {
-            checkAndShowUpsell();
-          }, 100);
-        }
-      });
-    }
-    return originalXHROpen.call(this, method, url, ...args);
-  };
-
-  // Also listen for form submissions that might affect cart
-  document.addEventListener("submit", function (event) {
-    const form = event.target;
-    const action = form.action || "";
-    const method = form.method || "GET";
-
-    if (method === "POST" && action.includes("/cart/")) {
-      // Clear cache and check upsell after form submission
-      setTimeout(() => {
-        clearUpsellCache();
-        checkAndShowUpsell();
-      }, 500);
-    }
-  });
-
   // Cleanup function to reset all observers
   window.cartUpsellCleanup = () => {
     observers.forEach((observer) => {
@@ -487,6 +442,11 @@
       }
     });
     observers.length = 0;
+
+    // Remove event listeners
+    document.removeEventListener("cart:rerender", handleCartRerender);
+    document.removeEventListener("cart:updated", handleCartRerender);
+    document.removeEventListener("cart:refresh", handleCartRerender);
 
     // Reset flags
     upsellAdded = false;
